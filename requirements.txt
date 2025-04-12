@@ -1,0 +1,8 @@
+streamlit
+google-generativeai
+SpeechRecognition
+gTTS
+numpy
+sounddevice
+soundfile
+python-dotenv
