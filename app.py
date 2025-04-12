@@ -85,7 +85,7 @@ col1, col2 = st.columns([3, 2])
 with col1:
     st.subheader("Speak to the Assistant")
 
-    # Start WebRTC streamer
+    # Start WebRTC streamer with TURN servers for cloud support
     webrtc_ctx = webrtc_streamer(
         key="audio",
         mode=WebRtcMode.SENDONLY,
@@ -93,19 +93,25 @@ with col1:
         media_stream_constraints={"audio": True, "video": False},
         rtc_configuration={
             "iceServers": [
-                {"urls": ["stun:stun.l.google.com:19302"]},
+                {"urls": "stun:stun.l.google.com:19302"},
+                {"urls": "stun:stun1.l.google.com:19302"},
+                {"urls": "stun:global.stun.twilio.com:3478?transport=udp"},
                 {
-                    "urls": ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443"],
-                    "username": "openrelayproject",
-                    "credential": "openrelayproject"
-                },
+                    "urls": "turn:global.turn.twilio.com:3478?transport=udp",
+                    "username": "test",
+                    "credential": "test"
+                }
             ]
         }
     )
 
-
-
     audio_output = st.empty()
+
+    # Show mic status
+    if webrtc_ctx.state.playing:
+        st.success("🎙️ Microphone is live. Start speaking!")
+    else:
+        st.warning("⚠️ Waiting for microphone connection...")
 
     # Button to stop and process audio
     if st.button("🛑 Process My Voice", disabled=not webrtc_ctx.state.playing):
