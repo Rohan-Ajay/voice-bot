@@ -1,5 +1,5 @@
 import streamlit as st
-from mic_recorder_streamlit import mic_recorder
+from streamlit_mic_recorder import mic_recorder
 import google.generativeai as genai
 import os
 import speech_recognition as sr
