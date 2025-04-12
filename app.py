@@ -86,12 +86,23 @@ with col1:
     st.subheader("Speak to the Assistant")
 
     # Start WebRTC streamer
-    webrtc_ctx = webrtc_streamer(
+    webrtc_streamer(
         key="audio",
         mode=WebRtcMode.SENDONLY,
         audio_processor_factory=AudioProcessor,
         media_stream_constraints={"audio": True, "video": False},
+        rtc_configuration={
+            "iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]},
+                {
+                    "urls": ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443"],
+                    "username": "openrelayproject",
+                    "credential": "openrelayproject"
+                },
+            ]
+        }
     )
+
 
     audio_output = st.empty()
 
