@@ -143,7 +143,7 @@ class AudioProcessor:
         return frame
 
 # WebRTC audio recording logic
-def record_audio_streamlit(duration_sec=5):
+def record_audio_streamlit(duration_sec=15):
     webrtc_ctx = webrtc_streamer(
     key="speech",
     mode=WebRtcMode.SENDONLY,
