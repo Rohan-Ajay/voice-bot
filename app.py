@@ -36,14 +36,14 @@ if 'audio_counter' not in st.session_state:
 # Backend API key handling
 def get_api_key():
     # First check environment variables
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = "AIzaSyAdQF894j1KwqCnPHOmMuFJX6znLcCpUhw"
     
     print(api_key)
 
     # Then check secrets file
     if not api_key:
         try:
-            api_key = st.secrets[os.getenv("SECRET")]
+            api_key = st.secrets["AIzaSyAdQF894j1KwqCnPHOmMuFJX6znLcCpUhw"]
         except:
             pass
     
