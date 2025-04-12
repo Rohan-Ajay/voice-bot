@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, ClientSettings
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import google.generativeai as genai
 import os
 import numpy as np
@@ -122,7 +122,8 @@ st.subheader("🎧 Speak Now")
 webrtc_ctx = webrtc_streamer(
     key="streamer",
     mode=WebRtcMode.SENDONLY,
-    client_settings=ClientSettings(media_stream_constraints={"audio": True, "video": False}),
+    audio_receiver_size=1024,
+    sendback_audio=False
 )
 
 # --- Process Button ---
