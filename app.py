@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, AudioProcessorBase
+from st_audiorec import st_audiorec
 import google.generativeai as genai
 import os
 import speech_recognition as sr
@@ -8,16 +8,17 @@ from io import BytesIO
 import base64
 import tempfile
 import wave
+from pydub import AudioSegment
 
-# Set page config
+# Set Streamlit page config
 st.set_page_config(page_title="Voice Assistant", page_icon="🎤", layout="wide")
 
-# Init session state
+# Initialize session state
 for key in ['conversation_history', 'gemini_chat', 'audio_counter']:
     if key not in st.session_state:
         st.session_state[key] = [] if key == 'conversation_history' else 0 if key == 'audio_counter' else None
 
-# Get API key
+# Get API key from environment or secrets
 def get_api_key():
     try:
         return st.secrets["GEMINI_API_KEY"]
@@ -42,7 +43,7 @@ def setup_gemini():
         st.error(f"Gemini setup failed: {e}")
         return None
 
-# TTS autoplay
+# TTS playback
 def create_autoplay_audio(response_text):
     tts = gTTS(text=response_text, lang='en')
     mp3_fp = BytesIO()
@@ -59,21 +60,9 @@ def create_autoplay_audio(response_text):
     </script>
     """
 
-# Audio processor
-class AudioProcessor(AudioProcessorBase):
-    def __init__(self) -> None:
-        self.frames = []
-
-    def recv(self, frame):
-        self.frames.append(frame.to_ndarray().flatten().tobytes())
-        return frame
-
-    def get_audio_bytes(self):
-        return b''.join(self.frames)
-
 # Main UI
 st.title("🎤 Voice Assistant")
-st.markdown("Talk to an AI using your mic.")
+st.markdown("Record your voice, let the AI respond with speech!")
 
 # Init Gemini
 if st.session_state.gemini_chat is None:
@@ -82,71 +71,50 @@ if st.session_state.gemini_chat is None:
 col1, col2 = st.columns([3, 2])
 
 with col1:
-    st.subheader("Speak to the Assistant")
+    st.subheader("🎙️ Record Your Voice")
+    wav_audio_data = st_audiorec()
 
-    webrtc_ctx = webrtc_streamer(
-        key="audio",
-        mode=WebRtcMode.SENDONLY,
-        audio_processor_factory=AudioProcessor,
-        media_stream_constraints={"audio": True, "video": False},
-        rtc_configuration={
-            "iceServers": [
-                {"urls": "stun:stun.l.google.com:19302"},
-                {
-                    "urls": [
-                        "turn:openrelay.metered.ca:80",
-                        "turn:openrelay.metered.ca:443",
-                        "turn:openrelay.metered.ca:443?transport=tcp"
-                    ],
-                    "username": "openrelayproject",
-                    "credential": "openrelayproject"
-                }
-            ]
-        },
-        async_processing=False
-    )
+    if wav_audio_data:
+        st.audio(wav_audio_data, format='audio/wav')
+        st.info("Transcribing and sending to Gemini...")
 
-    audio_output = st.empty()
+        try:
+            # Save uploaded data to WAV file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmpfile:
+                tmpfile.write(wav_audio_data)
+                tmp_path = tmpfile.name
 
-    if st.button("🛑 Process My Voice") and webrtc_ctx and webrtc_ctx.state and webrtc_ctx.state.playing:
-        if webrtc_ctx.audio_processor:
-            st.info("Converting speech...")
-            audio_bytes = webrtc_ctx.audio_processor.get_audio_bytes()
+            # Convert to 16-bit PCM WAV using pydub
+            audio = AudioSegment.from_file(tmp_path)
+            audio = audio.set_channels(1).set_frame_rate(16000)
+            processed_path = tmp_path.replace(".wav", "_processed.wav")
+            audio.export(processed_path, format="wav")
 
-            # Save to WAV
-            temp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
-            with wave.open(temp_path, 'wb') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(48000)
-                wf.writeframes(audio_bytes)
+            # Transcribe with SpeechRecognition
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(processed_path) as source:
+                audio_data = recognizer.record(source)
+            user_input = recognizer.recognize_google(audio_data)
 
-            try:
-                # Transcribe
-                recognizer = sr.Recognizer()
-                with sr.AudioFile(temp_path) as source:
-                    audio = recognizer.record(source)
-                user_input = recognizer.recognize_google(audio)
+            # Gemini response
+            response = st.session_state.gemini_chat.send_message(user_input)
+            ai_response = response.text
 
-                # AI response
-                response = st.session_state.gemini_chat.send_message(user_input)
-                ai_response = response.text
+            # Store history
+            st.session_state.conversation_history.append({"role": "user", "content": user_input})
+            st.session_state.conversation_history.append({"role": "assistant", "content": ai_response})
 
-                # History
-                st.session_state.conversation_history.append({"role": "user", "content": user_input})
-                st.session_state.conversation_history.append({"role": "assistant", "content": ai_response})
+            # Speak it back
+            audio_html = create_autoplay_audio(ai_response)
+            st.markdown(audio_html, unsafe_allow_html=True)
 
-                # Speak
-                audio_html = create_autoplay_audio(ai_response)
-                audio_output.markdown(audio_html, unsafe_allow_html=True)
-
-            except Exception as e:
-                st.error(f"Speech error: {e}")
+        except Exception as e:
+            st.error(f"Error during speech processing: {e}")
 
 with col2:
-    st.subheader("Conversation History")
+    st.subheader("🧠 Conversation History")
     if not st.session_state.conversation_history:
-        st.info("Start talking to see messages here.")
+        st.info("Start recording to see messages here.")
     else:
         for msg in st.session_state.conversation_history:
             role = "You" if msg["role"] == "user" else "AI"
@@ -159,12 +127,12 @@ with st.expander("⚙️ Settings & Help"):
         st.session_state.gemini_chat = None
         st.experimental_rerun()
     st.markdown("""
-    - Allow microphone access in your browser.
-    - Speak, then click "🛑 Process My Voice".
+    - Press the mic button to record your voice.
+    - After recording, the assistant will respond.
     - Powered by:
-      - `streamlit-webrtc` for audio
+      - `streamlit-audio-recorder` for mic input
       - `SpeechRecognition` for transcription
       - Gemini API for replies
-      - `gTTS` for speech synthesis
+      - `gTTS` for speech back
     """)
 
