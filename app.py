@@ -9,22 +9,22 @@ import base64
 import tempfile
 import wave
 
-# Set Streamlit page config
+# Set page config
 st.set_page_config(page_title="Voice Assistant", page_icon="🎤", layout="wide")
 
-# Session state initialization
+# Init session state
 for key in ['conversation_history', 'gemini_chat', 'audio_counter']:
     if key not in st.session_state:
         st.session_state[key] = [] if key == 'conversation_history' else 0 if key == 'audio_counter' else None
 
-# Get API key from environment or secrets
+# Get API key
 def get_api_key():
     try:
         return st.secrets["GEMINI_API_KEY"]
     except:
         return os.getenv("GEMINI_API_KEY")
 
-# Set up Gemini model
+# Set up Gemini
 def setup_gemini():
     api_key = get_api_key()
     if not api_key:
@@ -42,7 +42,7 @@ def setup_gemini():
         st.error(f"Gemini setup failed: {e}")
         return None
 
-# Text-to-Speech playback in browser
+# TTS autoplay
 def create_autoplay_audio(response_text):
     tts = gTTS(text=response_text, lang='en')
     mp3_fp = BytesIO()
@@ -59,7 +59,7 @@ def create_autoplay_audio(response_text):
     </script>
     """
 
-# Audio Processor Class
+# Audio processor
 class AudioProcessor(AudioProcessorBase):
     def __init__(self) -> None:
         self.frames = []
@@ -71,21 +71,19 @@ class AudioProcessor(AudioProcessorBase):
     def get_audio_bytes(self):
         return b''.join(self.frames)
 
-# --- MAIN UI ---
+# Main UI
 st.title("🎤 Voice Assistant")
-st.markdown("Talk to an AI using your mic")
+st.markdown("Talk to an AI using your mic.")
 
-# Initialize Gemini
+# Init Gemini
 if st.session_state.gemini_chat is None:
     st.session_state.gemini_chat = setup_gemini()
 
-# Set up columns
 col1, col2 = st.columns([3, 2])
 
 with col1:
     st.subheader("Speak to the Assistant")
 
-    # Start WebRTC streamer with TURN servers for cloud support
     webrtc_ctx = webrtc_streamer(
         key="audio",
         mode=WebRtcMode.SENDONLY,
@@ -104,24 +102,18 @@ with col1:
                     "credential": "openrelayproject"
                 }
             ]
-        }
+        },
+        async_processing=False
     )
 
     audio_output = st.empty()
 
-    # Show mic status
-    if webrtc_ctx.state.playing:
-        st.success("🎙️ Microphone is live. Start speaking!")
-    else:
-        st.warning("⚠️ Waiting for microphone connection...")
-
-    # Button to stop and process audio
-    if st.button("🛑 Process My Voice", disabled=not webrtc_ctx.state.playing):
+    if st.button("🛑 Process My Voice") and webrtc_ctx and webrtc_ctx.state and webrtc_ctx.state.playing:
         if webrtc_ctx.audio_processor:
             st.info("Converting speech...")
             audio_bytes = webrtc_ctx.audio_processor.get_audio_bytes()
-            
-            # Save to .wav for speech recognition
+
+            # Save to WAV
             temp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
             with wave.open(temp_path, 'wb') as wf:
                 wf.setnchannels(1)
@@ -130,21 +122,21 @@ with col1:
                 wf.writeframes(audio_bytes)
 
             try:
-                # Transcribe with SpeechRecognition
+                # Transcribe
                 recognizer = sr.Recognizer()
                 with sr.AudioFile(temp_path) as source:
                     audio = recognizer.record(source)
                 user_input = recognizer.recognize_google(audio)
 
-                # Send to Gemini
+                # AI response
                 response = st.session_state.gemini_chat.send_message(user_input)
                 ai_response = response.text
 
-                # Store history
+                # History
                 st.session_state.conversation_history.append({"role": "user", "content": user_input})
                 st.session_state.conversation_history.append({"role": "assistant", "content": ai_response})
 
-                # Speak back
+                # Speak
                 audio_html = create_autoplay_audio(ai_response)
                 audio_output.markdown(audio_html, unsafe_allow_html=True)
 
@@ -161,19 +153,18 @@ with col2:
             st.markdown(f"**{role}:** {msg['content']}")
             st.divider()
 
-# Reset option
 with st.expander("⚙️ Settings & Help"):
     if st.button("🔁 Reset Conversation"):
         st.session_state.conversation_history = []
         st.session_state.gemini_chat = None
         st.experimental_rerun()
     st.markdown("""
-    - Make sure you allow mic permissions.
-    - Click "Stop and Process" after speaking.
-    - This app uses:
-      - `streamlit-webrtc` for mic input
-      - `SpeechRecognition` to transcribe
-      - Google Gemini API for responses
-      - `gTTS` to speak back
+    - Allow microphone access in your browser.
+    - Speak, then click "🛑 Process My Voice".
+    - Powered by:
+      - `streamlit-webrtc` for audio
+      - `SpeechRecognition` for transcription
+      - Gemini API for replies
+      - `gTTS` for speech synthesis
     """)
 
