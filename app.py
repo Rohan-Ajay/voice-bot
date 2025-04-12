@@ -145,11 +145,10 @@ class AudioProcessor:
 # WebRTC audio recording logic
 def record_audio_streamlit(duration_sec=5):
     webrtc_ctx = webrtc_streamer(
-        key="speech",
-        mode=WebRtcMode.SENDONLY,
-        in_audio=True,
-        audio_processor_factory=AudioProcessor,
-        media_stream_constraints={"audio": True, "video": False},
+    key="speech",
+    mode=WebRtcMode.SENDONLY,
+    audio_processor_factory=AudioProcessor,
+    media_stream_constraints={"audio": True, "video": False},
     )
 
     if webrtc_ctx.state.playing and not st.session_state.recording_triggered:
