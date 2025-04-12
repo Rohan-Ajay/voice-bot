@@ -86,7 +86,7 @@ with col1:
     st.subheader("Speak to the Assistant")
 
     # Start WebRTC streamer
-    webrtc_streamer(
+    webrtc_ctx = webrtc_streamer(
         key="audio",
         mode=WebRtcMode.SENDONLY,
         audio_processor_factory=AudioProcessor,
@@ -102,6 +102,7 @@ with col1:
             ]
         }
     )
+
 
 
     audio_output = st.empty()
