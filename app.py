@@ -1,76 +1,50 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, AudioProcessorBase
 import google.generativeai as genai
 import os
-import numpy as np
 import speech_recognition as sr
 from gtts import gTTS
 from io import BytesIO
 import base64
 import tempfile
-import soundfile as sf
-from dotenv import load_dotenv
-from pathlib import Path
+import wave
 
-# Load environment variables
-load_dotenv()
-
-st.set_page_config(page_title="Voice Assistant", page_icon="🎙️", layout="wide")
+# Set Streamlit page config
+st.set_page_config(page_title="Voice Assistant", page_icon="🎤", layout="wide")
 
 # Session state initialization
-for var in ["conversation_history", "recording", "audio_data", "gemini_chat", "api_key_status", "audio_counter"]:
-    if var not in st.session_state:
-        st.session_state[var] = [] if var == "conversation_history" else False if var == "recording" else None if var in ["audio_data", "gemini_chat"] else 0
+for key in ['conversation_history', 'gemini_chat', 'audio_counter']:
+    if key not in st.session_state:
+        st.session_state[key] = [] if key == 'conversation_history' else 0 if key == 'audio_counter' else None
 
-# --- API Key Retrieval ---
+# Get API key from environment or secrets
 def get_api_key():
-    # Check Streamlit secrets
-    api_key = st.secrets.get("GEMINI_API_KEY", None)
-    if api_key:
-        return api_key
+    try:
+        return st.secrets["GEMINI_API_KEY"]
+    except:
+        return os.getenv("GEMINI_API_KEY")
 
-    # Check credentials files
-    cred_paths = ["credentials.json", "config/credentials.json", "config/gemini_credentials.json"]
-    for path in cred_paths:
-        if Path(path).exists():
-            try:
-                import json
-                with open(path, 'r') as f:
-                    creds = json.load(f)
-                    return creds.get("api_key", None)
-            except:
-                pass
-    return None
-
-# --- Gemini Setup ---
+# Set up Gemini model
 def setup_gemini():
     api_key = get_api_key()
     if not api_key:
-        st.error("Gemini API key not found. Add it to secrets or credentials.json.")
+        st.error("API Key not found.")
         return None
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(
             model_name="gemini-1.5-pro",
-            generation_config={"temperature": 0.7, "top_p": 0.95, "top_k": 64, "max_output_tokens": 1024},
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
-            ]
+            generation_config={"temperature": 0.7, "top_p": 0.95, "top_k": 40, "max_output_tokens": 1024},
+            safety_settings=[{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_LOW_AND_ABOVE"}],
         )
-        chat = model.start_chat(history=[])
-        st.session_state.api_key_status = True
-        return chat
+        return model.start_chat(history=[])
     except Exception as e:
-        st.error(f"Failed to initialize Gemini: {e}")
-        st.session_state.api_key_status = False
+        st.error(f"Gemini setup failed: {e}")
         return None
 
-# --- Convert AI text to auto-playing audio ---
-def create_autoplay_audio(text):
-    tts = gTTS(text=text, lang='en')
+# Text-to-Speech playback in browser
+def create_autoplay_audio(response_text):
+    tts = gTTS(text=response_text, lang='en')
     mp3_fp = BytesIO()
     tts.write_to_fp(mp3_fp)
     mp3_fp.seek(0)
@@ -80,76 +54,106 @@ def create_autoplay_audio(text):
     <audio id="audio-{st.session_state.audio_counter}" autoplay>
         <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
     </audio>
-    <script>document.getElementById("audio-{st.session_state.audio_counter}").play();</script>
+    <script>
+        document.getElementById("audio-{st.session_state.audio_counter}").play();
+    </script>
     """
 
-# --- Process voice with Gemini ---
-def process_with_gemini(audio_path, chat):
-    try:
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(audio_path) as source:
-            audio = recognizer.record(source)
-        user_input = recognizer.recognize_google(audio)
-        st.session_state.conversation_history.append({"role": "user", "content": user_input})
-        response = chat.send_message(user_input)
-        ai_text = response.text
-        st.session_state.conversation_history.append({"role": "assistant", "content": ai_text})
-        return user_input, ai_text
-    except Exception as e:
-        st.error(f"Error processing speech: {e}")
-        return None, None
+# Audio Processor Class
+class AudioProcessor(AudioProcessorBase):
+    def __init__(self) -> None:
+        self.frames = []
 
-# --- Save audio buffer to file ---
-def save_audio_from_buffer(audio_buffer):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmpfile:
-        sf.write(tmpfile.name, audio_buffer.to_ndarray(), audio_buffer.samplerate)
-        return tmpfile.name
+    def recv(self, frame):
+        self.frames.append(frame.to_ndarray().flatten().tobytes())
+        return frame
 
-# --- Title & API Check ---
-st.title("🎙️ Voice Assistant")
-st.markdown("Speak to an AI assistant powered by Google Gemini.")
+    def get_audio_bytes(self):
+        return b''.join(self.frames)
 
+# --- MAIN UI ---
+st.title("🎤 Voice Assistant")
+st.markdown("Talk to an AI using your mic")
+
+# Initialize Gemini
 if st.session_state.gemini_chat is None:
     st.session_state.gemini_chat = setup_gemini()
 
-if st.session_state.api_key_status:
-    st.success("✅ API key valid")
-else:
-    st.warning("⚠️ Missing or invalid Gemini API key")
+# Set up columns
+col1, col2 = st.columns([3, 2])
 
-# --- WebRTC Audio Streamer ---
-st.subheader("🎧 Speak Now")
-webrtc_ctx = webrtc_streamer(
-    key="streamer",
-    mode=WebRtcMode.SENDONLY,
-    audio_receiver_size=1024,
-    sendback_audio=False
-)
+with col1:
+    st.subheader("Speak to the Assistant")
 
-# --- Process Button ---
-if webrtc_ctx.audio_receiver:
-    audio_buffer = webrtc_ctx.audio_receiver.get_new_audio_frames()
-    if len(audio_buffer) > 0:
-        st.session_state.recording = True
-        audio_data = audio_buffer[0]
-        audio_path = save_audio_from_buffer(audio_data)
-        st.session_state.audio_data = audio_path
+    # Start WebRTC streamer
+    webrtc_ctx = webrtc_streamer(
+        key="audio",
+        mode=WebRtcMode.SENDONLY,
+        audio_processor_factory=AudioProcessor,
+        media_stream_constraints={"audio": True, "video": False},
+    )
 
-        st.info("Processing your voice...")
-        user_text, ai_text = process_with_gemini(audio_path, st.session_state.gemini_chat)
-        if ai_text:
-            st.markdown(create_autoplay_audio(ai_text), unsafe_allow_html=True)
+    audio_output = st.empty()
 
-# --- Chat History ---
-st.subheader("💬 Conversation History")
-for msg in st.session_state.conversation_history:
-    st.markdown(f"**{'You' if msg['role']=='user' else 'AI'}:** {msg['content']}")
-    st.divider()
+    # Button to stop and process audio
+    if st.button("🛑 Process My Voice", disabled=not webrtc_ctx.state.playing):
+        if webrtc_ctx.audio_processor:
+            st.info("Converting speech...")
+            audio_bytes = webrtc_ctx.audio_processor.get_audio_bytes()
+            
+            # Save to .wav for speech recognition
+            temp_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
+            with wave.open(temp_path, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(48000)
+                wf.writeframes(audio_bytes)
 
-# --- Reset Button ---
-with st.expander("⚙️ Settings"):
-    if st.button("🔄 Reset Conversation"):
+            try:
+                # Transcribe with SpeechRecognition
+                recognizer = sr.Recognizer()
+                with sr.AudioFile(temp_path) as source:
+                    audio = recognizer.record(source)
+                user_input = recognizer.recognize_google(audio)
+
+                # Send to Gemini
+                response = st.session_state.gemini_chat.send_message(user_input)
+                ai_response = response.text
+
+                # Store history
+                st.session_state.conversation_history.append({"role": "user", "content": user_input})
+                st.session_state.conversation_history.append({"role": "assistant", "content": ai_response})
+
+                # Speak back
+                audio_html = create_autoplay_audio(ai_response)
+                audio_output.markdown(audio_html, unsafe_allow_html=True)
+
+            except Exception as e:
+                st.error(f"Speech error: {e}")
+
+with col2:
+    st.subheader("Conversation History")
+    if not st.session_state.conversation_history:
+        st.info("Start talking to see messages here.")
+    else:
+        for msg in st.session_state.conversation_history:
+            role = "You" if msg["role"] == "user" else "AI"
+            st.markdown(f"**{role}:** {msg['content']}")
+            st.divider()
+
+# Reset option
+with st.expander("⚙️ Settings & Help"):
+    if st.button("🔁 Reset Conversation"):
         st.session_state.conversation_history = []
-        st.session_state.gemini_chat = setup_gemini()
-        st.session_state.audio_counter = 0
-        st.rerun()
+        st.session_state.gemini_chat = None
+        st.experimental_rerun()
+    st.markdown("""
+    - Make sure you allow mic permissions.
+    - Click "Stop and Process" after speaking.
+    - This app uses:
+      - `streamlit-webrtc` for mic input
+      - `SpeechRecognition` to transcribe
+      - Google Gemini API for responses
+      - `gTTS` to speak back
+    """)
+
